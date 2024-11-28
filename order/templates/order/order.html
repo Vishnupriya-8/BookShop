@@ -1,0 +1,206 @@
+{% extends 'store/base.html' %}
+{% load static %}
+{% load customfunction %}
+{% load crispy_forms_tags %}
+
+{% block container %}
+<div class="row">
+    <div class="col-md-8 order-md-1 cart_info">
+        <h4 class="mb-3 mt-3">Shipping Address</h4>
+        {% if messages %}
+        <div class="messages">
+            {% for message in messages %}
+            <p{% if message.tags %} class="{{ message.tags }}"{% endif %}>{{ message }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+        <form id="order-form" method="POST" class="needs-validation" novalidate>
+            {% csrf_token %}
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    {{ form.name|as_crispy_field }}
+                </div>
+                <div class="col-md-6 mb-3">
+                    {{ form.email|as_crispy_field }}
+                </div>
+            </div>
+            <div class="mb-3">
+                {{ form.phone|as_crispy_field }}
+            </div>
+            <div class="mb-3">
+                {{ form.address|as_crispy_field }}
+            </div>
+            <div class="row">
+                <div class="col-md-5 mb-3">
+                    {{ form.division|as_crispy_field }}
+                </div>
+                <div class="col-md-4 mb-3">
+                    {{ form.district|as_crispy_field }}
+                </div>
+                <div class="col-md-3 mb-3">
+                    {{ form.zip_code|as_crispy_field }}
+                </div>
+            </div>
+            <hr class="mb-4">
+            <!-- PayPal Button Container -->
+            <div id="paypal-button-container"></div>
+        </form>
+    </div>
+    <div class="col-md-4 order-md-2 mb-4">
+        <ul class="list-group">
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                <h4>Checkout Summary</h4>
+            </li>
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                Books<span>{{ cart|length }}</span>
+            </li>
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                Subtotal<span>{{ cart.get_total_price }} $.</span>
+            </li>
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                Shipping<span>{{ cost|shipping }} $.</span>
+            </li>
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                Payable Total<span>{{ cart.get_total_price|payabletotal}} $.</span>
+            </li>
+        </ul>
+    </div>
+</div>
+
+<!-- Add PayPal Script -->
+<script src="https://www.paypal.com/sdk/js?client-id=AZe42512CeBL__2twPFqp2U9tVyFSXrfTJQL2Q-lTn1ep3y6xg0-ZbUl38e67kKiBCPYD-BceqQG_L5J&currency=USD"></script>
+<script>
+    // Get CSRF token from cookie
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+
+    function validateForm() {
+        const form = document.getElementById('order-form');
+        const formData = new FormData(form);
+        let isValid = true;
+        let errors = {};
+
+        // Required fields to check
+        const requiredFields = ['name', 'email', 'phone', 'address', 'division', 'district', 'zip_code'];
+
+        requiredFields.forEach(fieldName => {
+            const value = formData.get(fieldName);
+            if (!value || !value.trim()) {
+                isValid = false;
+                errors[fieldName] = `${fieldName.replace('_', ' ')} is required`;
+            }
+        });
+
+        if (!isValid) {
+            displayFormErrors(errors);
+        }
+
+        return isValid;
+    }
+
+    function displayFormErrors(errors) {
+        document.querySelectorAll('.invalid-feedback').forEach(el => el.remove());
+        document.querySelectorAll('.is-invalid').forEach(el => el.classList.remove('is-invalid'));
+
+        Object.entries(errors).forEach(([field, message]) => {
+            const input = document.querySelector(`[name="${field}"]`);
+            if (input) {
+                input.classList.add('is-invalid');
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'invalid-feedback';
+                errorDiv.textContent = message;
+                input.parentNode.appendChild(errorDiv);
+            }
+        });
+    }
+
+    paypal.Buttons({
+        onClick: function() {
+            return validateForm();
+        },
+
+        createOrder: function(data, actions) {
+            if (!validateForm()) {
+                return false;
+            }
+            return actions.order.create({
+                purchase_units: [{
+                    amount: {
+                        value: '{{ cart.get_total_price|payabletotal }}'
+                    }
+                }]
+            });
+        },
+
+        onApprove: function(data, actions) {
+            return actions.order.capture().then(function(orderData) {
+                const form = document.getElementById('order-form');
+                const formData = new FormData(form);
+                
+                // Add PayPal details
+                formData.append('payment_id', orderData.id);
+                formData.append('payment_status', orderData.status);
+
+                // Get CSRF token
+                const csrftoken = getCookie('csrftoken');
+                
+                // Submit form
+                return fetch(window.location.href, {
+                    method: 'POST',
+                    body: formData,
+                    headers: {
+                        'X-CSRFToken': csrftoken,
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    credentials: 'same-origin'
+                })
+                .then(async response => {
+                    try {
+                        const contentType = response.headers.get('content-type');
+                        if (contentType && contentType.includes('application/json')) {
+                            return response.json();
+                        }
+                        throw new Error('Response was not JSON');
+                    } catch (error) {
+                        console.error('Response parsing error:', error);
+                        const text = await response.text();
+                        console.error('Raw response:', text);
+                        throw new Error('Failed to process server response');
+                    }
+                })
+                .then(data => {
+                    if (data.success) {
+                        window.location.href = data.redirect_url;
+                    } else {
+                        if (data.field_errors) {
+                            displayFormErrors(data.field_errors);
+                        }
+                        throw new Error(data.error || 'Payment processing failed');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert(error.message || 'There was an error processing your order');
+                });
+            });
+        },
+
+        onError: function(err) {
+            console.error('PayPal Error:', err);
+            alert('PayPal Error: Please try again');
+        }
+    }).render('#paypal-button-container');
+</script>
+{% endblock %}
